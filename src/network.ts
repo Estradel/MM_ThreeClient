@@ -1,18 +1,52 @@
 ﻿import { SkeletonVisualizer } from "./visualizer";
+import {BvhSkeleton} from "./BvhSkeleton.ts";
+
+interface BindPoseData {
+    positions: number[][]; // [x, y, z]
+    rotations: number[][]; // [x, y, z, w]
+    scales: number[][];    // [x, y, z]
+}
+
+export interface SkeletonInitMsg {
+    type: "SKELETON_DEF"; // ou "SKELETON_DEF" selon votre code Python
+    bone_names: string[];
+    parents: number[];     // Indices des parents (-1 pour la racine)
+    bind_pose: BindPoseData;
+}
 
 // Doit correspondre au serveur Python
 const MAGIC_NUMBER = 0xBADDF00D;
 
 export class AnimationClient {
+    private static instance: AnimationClient | null = null;
+
     private ws: WebSocket | null = null;
     private visualizer: SkeletonVisualizer;
     private url: string;
     private infoDiv: HTMLElement;
 
-    constructor(url: string, visualizer: SkeletonVisualizer) {
+    private constructor(url: string, visualizer: SkeletonVisualizer) {
         this.url = url;
         this.visualizer = visualizer;
         this.infoDiv = document.getElementById('info')!;
+        this.AddClient();
+    }
+
+    public static getInstance(url: string = "", visualizer: SkeletonVisualizer | null = null): AnimationClient {
+        if (!AnimationClient.instance) {
+            AnimationClient.instance = new AnimationClient(url, visualizer!);
+        }
+        return AnimationClient.instance;
+    }
+
+    public static resetInstance(): void {
+        if (AnimationClient.instance?.ws) {
+            AnimationClient.instance.ws.close();
+        }
+        AnimationClient.instance = null;
+    }
+
+    public AddClient() {
         this.connect();
     }
 
@@ -41,9 +75,14 @@ export class AnimationClient {
         if (typeof data === "string") {
             try {
                 const msg = JSON.parse(data);
+
                 if (msg.type === "SKELETON_DEF") {
-                    this.visualizer.initializeSkeleton(msg.bone_names);
-                    this.infoDiv.innerText = "Squelette chargé. Streaming...";
+                    const initData = msg as SkeletonInitMsg;
+                    let skel = new BvhSkeleton();
+                    skel.initializeSkeleton(initData);
+                    this.visualizer.addSkeleton(skel);
+                    // this.visualizer.initializeSkeleton(initData);
+                    this.infoDiv.innerText = "Squelette & Hiérarchie chargés.";
                 }
             } catch (e) {
                 console.error("Erreur JSON", e);
@@ -80,6 +119,8 @@ export class AnimationClient {
         const matricesData = new Float32Array(buffer, 12);
 
         // Mise à jour de la scène
-        this.visualizer.updatePose(matricesData);
+        for (const skeleton of this.visualizer.Skeletons) {
+            skeleton.updatePose(matricesData);
+        }
     }
 }
